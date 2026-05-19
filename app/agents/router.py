@@ -67,7 +67,7 @@ async def route_request(state: AgentState) -> AgentState:
 تحذير: لا تخلط أبداً بين طلب الاستعلام (Query) وطلب الإضافة (Add). إذا كان المستخدم يسأل (بوجود أدوات استفهام أو بصيغة طلب معلومات)، فالنية حتماً هي `query_finance`.
 
 JSON schema to return:
-{{"intent": "log_expense|query_finance|delete_entry|update_expense|export_report|log_income|query_balance|add_fixed_payment|list_fixed_payments|unknown", "clarification_needed": true|false, "clarification_question": "string or null"}}"""
+{{{{ "intent": "log_expense|query_finance|delete_entry|update_expense|export_report|log_income|query_balance|add_fixed_payment|list_fixed_payments|unknown", "clarification_needed": true|false, "clarification_question": "string or null" }}}}"""
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", prompt_sys),
