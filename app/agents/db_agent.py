@@ -358,7 +358,7 @@ async def execute_operation(state: AgentState) -> AgentState:
 
             # ── 2e. Export report ─────────────────────────────────────────
             elif state.get("intent") == "export_report":
-                query = """
+                expense_query = """
                     SELECT e.item, e.amount, e.currency, e.created_at, c.name AS category
                     FROM expenses e
                     JOIN categories c ON e.category_id = c.id
@@ -366,11 +366,26 @@ async def execute_operation(state: AgentState) -> AgentState:
                     ORDER BY e.created_at DESC
                     LIMIT 1000
                 """
-                result = await session.execute(text(query), {"user_id": state["telegram_id"]})
-                sql_result = [dict(row._mapping) for row in result.all()]
+                income_query = """
+                    SELECT i.source_type as item, i.description, i.amount, i.currency, i.created_at, 'Income' AS category
+                    FROM income i
+                    WHERE i.user_id = :user_id
+                    ORDER BY i.created_at DESC
+                    LIMIT 1000
+                """
+                expense_result = await session.execute(text(expense_query), {"user_id": state["telegram_id"]})
+                income_result = await session.execute(text(income_query), {"user_id": state["telegram_id"]})
+                
+                expenses_list = [dict(row._mapping) for row in expense_result.all()]
+                income_list = [dict(row._mapping) for row in income_result.all()]
 
-                if not sql_result:
-                    return {**state, "response": "ما فيش مصاريف لتصديرها بعد! ابدأ بتسجيل مصاريفك أولاً."}
+                if not expenses_list and not income_list:
+                    return {**state, "response": "ما فيش أي معاملات (مصاريف أو دخل) لتصديرها بعد! ابدأ بتسجيل معاملاتك أولاً."}
+
+                sql_result = {
+                    "expenses": expenses_list,
+                    "income": income_list
+                }
 
                 return {**state, "sql_result": sql_result, "query_key": "export_report"}
 
