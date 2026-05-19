@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.chart import BarChart, Reference
+from openpyxl.chart import PieChart, Reference
 from openpyxl.utils import get_column_letter
 from telegram import Bot
 
@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 HEADER_FILL  = PatternFill("solid", fgColor="2E86AB")   # Blue
 ACCENT_FILL  = PatternFill("solid", fgColor="F6F6F6")   # Light grey alternating row
 TOTAL_FILL   = PatternFill("solid", fgColor="A8DADC")   # Teal for totals
+INCOME_FILL  = PatternFill("solid", fgColor="D4EDDA")   # Light green for income totals
 HEADER_FONT  = Font(bold=True, color="FFFFFF", size=11)
 TITLE_FONT   = Font(bold=True, color="1D3557", size=13)
 NORMAL_FONT  = Font(size=10)
@@ -49,42 +50,42 @@ def _style_header_row(ws, row: int, num_cols: int):
         cell.border = THIN_BORDER
 
 
-def generate_excel_report(sql_result: list[dict], current_date: str | None = None) -> io.BytesIO:
+def generate_excel_report(sql_result: dict, current_date: str | None = None) -> io.BytesIO:
     """
-    Generates a professional 3-sheet Excel workbook from sql_result rows.
+    Generates a professional Excel workbook from sql_result dict (expenses and income).
     Returns an in-memory BytesIO buffer ready to send.
-
-    sql_result rows must have keys: item, amount, currency, created_at, category
     """
     wb = openpyxl.Workbook()
+    expenses = sql_result.get("expenses", [])
+    income = sql_result.get("income", [])
 
-    # ── Sheet 1: Summary by Category ─────────────────────────────────────────
+    # ── Sheet 1: Summary ─────────────────────────────────────────────────────
     ws_summary = wb.active
     ws_summary.title = "Summary"
 
     ws_summary.merge_cells("A1:D1")
     title_cell = ws_summary["A1"]
-    title_cell.value = "💰 Finance Report — Spending by Category"
+    title_cell.value = "💰 Finance Report — Summary"
     title_cell.font = TITLE_FONT
     title_cell.alignment = CENTER
 
+    # --- Expenses Summary ---
+    ws_summary.cell(row=3, column=1, value="📉 Expenses by Category").font = Font(bold=True, size=11)
     headers = ["Category", "Total (EGP)", "Transactions", "Average (EGP)"]
     for col, h in enumerate(headers, 1):
-        ws_summary.cell(row=2, column=col, value=h)
-    _style_header_row(ws_summary, 2, len(headers))
+        ws_summary.cell(row=4, column=col, value=h)
+    _style_header_row(ws_summary, 4, len(headers))
 
-    # Aggregate by category
     category_totals: dict[str, dict] = {}
-    for row in sql_result:
+    for row in expenses:
         cat = row.get("category", "Other")
         if cat not in category_totals:
             category_totals[cat] = {"total": 0.0, "count": 0}
         category_totals[cat]["total"] += float(row.get("amount") or 0)
         category_totals[cat]["count"] += 1
 
-    for r, (cat, data) in enumerate(
-        sorted(category_totals.items(), key=lambda x: -x[1]["total"]), start=3
-    ):
+    r = 5
+    for cat, data in sorted(category_totals.items(), key=lambda x: -x[1]["total"]):
         avg = round(data["total"] / data["count"], 2) if data["count"] else 0
         values = [cat, round(data["total"], 2), data["count"], avg]
         for c, v in enumerate(values, 1):
@@ -94,87 +95,167 @@ def generate_excel_report(sql_result: list[dict], current_date: str | None = Non
             cell.font = NORMAL_FONT
             if r % 2 == 0:
                 cell.fill = ACCENT_FILL
+        r += 1
 
-    # Grand total row
-    grand_total = sum(d["total"] for d in category_totals.values())
-    total_row = ws_summary.max_row + 1
-    ws_summary.cell(row=total_row, column=1, value="TOTAL").font = Font(bold=True)
-    ws_summary.cell(row=total_row, column=2, value=round(grand_total, 2)).font = Font(bold=True)
+    # Expenses Grand Total
+    grand_total_expenses = sum(d["total"] for d in category_totals.values())
+    ws_summary.cell(row=r, column=1, value="TOTAL EXPENSES").font = Font(bold=True)
+    ws_summary.cell(row=r, column=2, value=round(grand_total_expenses, 2)).font = Font(bold=True)
     for c in range(1, 5):
-        ws_summary.cell(row=total_row, column=c).fill = TOTAL_FILL
-        ws_summary.cell(row=total_row, column=c).border = THIN_BORDER
+        ws_summary.cell(row=r, column=c).fill = TOTAL_FILL
+        ws_summary.cell(row=r, column=c).border = THIN_BORDER
+    
+    r += 3 # spacing
 
-    _auto_width(ws_summary)
-
-    # ── Sheet 2: Transactions ─────────────────────────────────────────────────
-    ws_trans = wb.create_sheet("Transactions")
-
-    ws_trans.merge_cells("A1:E1")
-    ws_trans["A1"].value = "📋 All Transactions"
-    ws_trans["A1"].font = TITLE_FONT
-    ws_trans["A1"].alignment = CENTER
-
-    trans_headers = ["Date", "Item", "Category", "Amount (EGP)", "Currency"]
-    for col, h in enumerate(trans_headers, 1):
-        ws_trans.cell(row=2, column=col, value=h)
-    _style_header_row(ws_trans, 2, len(trans_headers))
-
-    for r, row in enumerate(sql_result, start=3):
-        created_at = row.get("created_at")
-        if hasattr(created_at, "strftime"):
-            date_str = created_at.strftime("%Y-%m-%d %H:%M")
-        else:
-            date_str = str(created_at)[:16] if created_at else ""
-
-        values = [
-            date_str,
-            row.get("item", ""),
-            row.get("category", ""),
-            float(row.get("amount") or 0),
-            row.get("currency", "EGP"),
-        ]
+    # --- Income Summary ---
+    ws_summary.cell(row=r, column=1, value="📈 Income Summary").font = Font(bold=True, size=11)
+    r += 1
+    income_headers = ["Source Type", "Total (EGP)", "Transactions", "Average (EGP)"]
+    for col, h in enumerate(income_headers, 1):
+        ws_summary.cell(row=r, column=col, value=h)
+    _style_header_row(ws_summary, r, len(income_headers))
+    
+    r += 1
+    income_totals: dict[str, dict] = {}
+    for row in income:
+        source = row.get("item", "Other")
+        if source not in income_totals:
+            income_totals[source] = {"total": 0.0, "count": 0}
+        income_totals[source]["total"] += float(row.get("amount") or 0)
+        income_totals[source]["count"] += 1
+        
+    for source, data in sorted(income_totals.items(), key=lambda x: -x[1]["total"]):
+        avg = round(data["total"] / data["count"], 2) if data["count"] else 0
+        values = [source, round(data["total"], 2), data["count"], avg]
         for c, v in enumerate(values, 1):
-            cell = ws_trans.cell(row=r, column=c, value=v)
+            cell = ws_summary.cell(row=r, column=c, value=v)
             cell.border = THIN_BORDER
             cell.alignment = LEFT
             cell.font = NORMAL_FONT
             if r % 2 == 0:
                 cell.fill = ACCENT_FILL
+        r += 1
 
-    _auto_width(ws_trans)
+    # Income Grand Total
+    grand_total_income = sum(d["total"] for d in income_totals.values())
+    ws_summary.cell(row=r, column=1, value="TOTAL INCOME").font = Font(bold=True)
+    ws_summary.cell(row=r, column=2, value=round(grand_total_income, 2)).font = Font(bold=True)
+    for c in range(1, 5):
+        ws_summary.cell(row=r, column=c).fill = INCOME_FILL
+        ws_summary.cell(row=r, column=c).border = THIN_BORDER
+    
+    r += 2 # spacing
+    # Net Balance
+    ws_summary.cell(row=r, column=1, value="NET BALANCE").font = Font(bold=True, size=12)
+    ws_summary.cell(row=r, column=2, value=round(grand_total_income - grand_total_expenses, 2)).font = Font(bold=True, size=12)
 
-    # ── Sheet 3: Chart ────────────────────────────────────────────────────────
-    ws_chart = wb.create_sheet("Chart")
-    ws_chart["A1"].value = "Chart Data"
-    ws_chart["A1"].font = TITLE_FONT
+    _auto_width(ws_summary)
 
-    ws_chart.cell(row=2, column=1, value="Category")
-    ws_chart.cell(row=2, column=2, value="Total (EGP)")
-    _style_header_row(ws_chart, 2, 2)
+    # ── Sheet 2: Expenses ─────────────────────────────────────────────────────
+    if expenses:
+        ws_exp = wb.create_sheet("Expenses")
+        ws_exp.merge_cells("A1:E1")
+        ws_exp["A1"].value = "📉 Expenses Transactions"
+        ws_exp["A1"].font = TITLE_FONT
+        ws_exp["A1"].alignment = CENTER
 
-    for r, (cat, data) in enumerate(
-        sorted(category_totals.items(), key=lambda x: -x[1]["total"]), start=3
-    ):
-        ws_chart.cell(row=r, column=1, value=cat)
-        ws_chart.cell(row=r, column=2, value=round(data["total"], 2))
+        trans_headers = ["Date", "Item", "Category", "Amount (EGP)", "Currency"]
+        for col, h in enumerate(trans_headers, 1):
+            ws_exp.cell(row=2, column=col, value=h)
+        _style_header_row(ws_exp, 2, len(trans_headers))
 
-    last_data_row = ws_chart.max_row
-    chart = BarChart()
-    chart.type = "col"
-    chart.title = "Spending by Category"
-    chart.y_axis.title = "Total (EGP)"
-    chart.x_axis.title = "Category"
-    chart.style = 10
-    chart.width = 20
-    chart.height = 12
+        for row_idx, row in enumerate(expenses, start=3):
+            created_at = row.get("created_at")
+            if hasattr(created_at, "strftime"):
+                date_str = created_at.strftime("%Y-%m-%d %H:%M")
+            else:
+                date_str = str(created_at)[:16] if created_at else ""
 
-    data_ref = Reference(ws_chart, min_col=2, min_row=2, max_row=last_data_row)
-    cats_ref = Reference(ws_chart, min_col=1, min_row=3, max_row=last_data_row)
-    chart.add_data(data_ref, titles_from_data=True)
-    chart.set_categories(cats_ref)
-    ws_chart.add_chart(chart, "D2")
+            values = [
+                date_str,
+                row.get("item", ""),
+                row.get("category", ""),
+                float(row.get("amount") or 0),
+                row.get("currency", "EGP"),
+            ]
+            for c, v in enumerate(values, 1):
+                cell = ws_exp.cell(row=row_idx, column=c, value=v)
+                cell.border = THIN_BORDER
+                cell.alignment = LEFT
+                cell.font = NORMAL_FONT
+                if row_idx % 2 == 0:
+                    cell.fill = ACCENT_FILL
 
-    _auto_width(ws_chart)
+        _auto_width(ws_exp)
+
+    # ── Sheet 3: Income ───────────────────────────────────────────────────────
+    if income:
+        ws_inc = wb.create_sheet("Income")
+        ws_inc.merge_cells("A1:E1")
+        ws_inc["A1"].value = "📈 Income Transactions"
+        ws_inc["A1"].font = TITLE_FONT
+        ws_inc["A1"].alignment = CENTER
+
+        inc_headers = ["Date", "Source", "Description", "Amount (EGP)", "Currency"]
+        for col, h in enumerate(inc_headers, 1):
+            ws_inc.cell(row=2, column=col, value=h)
+        _style_header_row(ws_inc, 2, len(inc_headers))
+
+        for row_idx, row in enumerate(income, start=3):
+            created_at = row.get("created_at")
+            if hasattr(created_at, "strftime"):
+                date_str = created_at.strftime("%Y-%m-%d %H:%M")
+            else:
+                date_str = str(created_at)[:16] if created_at else ""
+
+            values = [
+                date_str,
+                row.get("item", ""),
+                row.get("description", ""),
+                float(row.get("amount") or 0),
+                row.get("currency", "EGP"),
+            ]
+            for c, v in enumerate(values, 1):
+                cell = ws_inc.cell(row=row_idx, column=c, value=v)
+                cell.border = THIN_BORDER
+                cell.alignment = LEFT
+                cell.font = NORMAL_FONT
+                if row_idx % 2 == 0:
+                    cell.fill = ACCENT_FILL
+
+        _auto_width(ws_inc)
+
+    # ── Sheet 4: Chart ────────────────────────────────────────────────────────
+    if expenses:
+        ws_chart = wb.create_sheet("Chart")
+        ws_chart["A1"].value = "Chart Data"
+        ws_chart["A1"].font = TITLE_FONT
+
+        ws_chart.cell(row=2, column=1, value="Category")
+        ws_chart.cell(row=2, column=2, value="Total (EGP)")
+        _style_header_row(ws_chart, 2, 2)
+
+        for row_idx, (cat, data) in enumerate(
+            sorted(category_totals.items(), key=lambda x: -x[1]["total"]), start=3
+        ):
+            ws_chart.cell(row=row_idx, column=1, value=cat)
+            ws_chart.cell(row=row_idx, column=2, value=round(data["total"], 2))
+
+        last_data_row = ws_chart.max_row
+        
+        # Create Pie Chart instead of Bar Chart
+        chart = PieChart()
+        chart.title = "Expenses by Category"
+        
+        data_ref = Reference(ws_chart, min_col=2, min_row=2, max_row=last_data_row)
+        cats_ref = Reference(ws_chart, min_col=1, min_row=3, max_row=last_data_row)
+        chart.add_data(data_ref, titles_from_data=True)
+        chart.set_categories(cats_ref)
+        
+        # Position the chart
+        ws_chart.add_chart(chart, "D2")
+
+        _auto_width(ws_chart)
 
     # ── Serialize to buffer ───────────────────────────────────────────────────
     buffer = io.BytesIO()
@@ -183,7 +264,7 @@ def generate_excel_report(sql_result: list[dict], current_date: str | None = Non
     return buffer
 
 
-async def export_excel_report(sql_result: list[dict], bot: Bot, chat_id: int, current_date: str | None = None) -> bool:
+async def export_excel_report(sql_result: dict, bot: Bot, chat_id: int, current_date: str | None = None) -> bool:
     """
     Generates the Excel report and sends it via Telegram.
     Returns True on success, False on error.
@@ -194,14 +275,16 @@ async def export_excel_report(sql_result: list[dict], bot: Bot, chat_id: int, cu
         today_str = (current_date or datetime.now(timezone.utc).isoformat())[:10]
         filename = f"finance_report_{today_str}.xlsx"
 
+        total_transactions = len(sql_result.get("expenses", [])) + len(sql_result.get("income", []))
+
         await bot.send_document(
             chat_id=chat_id,
             document=buffer,
             filename=filename,
             caption=(
-                "📊 *تقريرك المالي جاهز!*\n"
-                f"يحتوي على {len(sql_result)} معاملة 💼\n\n"
-                "افتح الملف لتشوف Summary + Chart 📈"
+                "📊 *تقريرك المالي الشامل جاهز!*\n"
+                f"يحتوي على {total_transactions} معاملة (مصاريف ودخل) 💼\n\n"
+                "افتح الملف لتشوف الملخص والـ Pie Chart 📈"
             ),
             parse_mode="Markdown",
         )
@@ -210,3 +293,4 @@ async def export_excel_report(sql_result: list[dict], bot: Bot, chat_id: int, cu
     except Exception as e:
         logger.error(f"Excel export error: {e}", exc_info=True)
         return False
+
