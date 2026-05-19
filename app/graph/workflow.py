@@ -33,13 +33,10 @@ def _build_workflow() -> StateGraph:
 
     # Bug #2 fix: confirm_delete ALWAYS interrupts (never checks a flag first)
     def confirm_delete(state: AgentState):
-        # Pauses the graph — resumes via Command(resume=True/False) from telegram_handler
-        confirmed = interrupt("confirm_delete")
-        if confirmed:
-            # User confirmed → set flag so db_agent knows to proceed with deletion
-            return {**state, "pending_delete": True, "pending_confirmation": False}
-        # User cancelled → flag stays False, db_agent skips deletion
-        return {**state, "pending_delete": False, "pending_confirmation": False}
+        # This always pauses the graph and waits for user input via Command(resume=...)
+        interrupt("confirm_delete")
+        # When resumed: Command(resume=True) → confirmed, Command(resume=False) → cancelled
+        return state
 
     workflow.add_node("confirm_delete", confirm_delete)
 
@@ -62,6 +59,14 @@ def _build_workflow() -> StateGraph:
             return "extractor"   # extractor pulls update_data fields
         elif intent == "export_report":
             return "db_agent"    # db_agent fetches the data, handler sends the file
+        elif intent == "log_income":
+            return "extractor"   # extractor pulls income_data fields
+        elif intent == "query_balance":
+            return "db_agent"    # direct to db_agent for balance calculation
+        elif intent == "add_fixed_payment":
+            return "extractor"   # extractor pulls fixed_payment_data fields
+        elif intent == "list_fixed_payments":
+            return "db_agent"    # direct to db_agent to list
         else:
             return "analyst"     # unknown → analyst gives a polite redirect
 

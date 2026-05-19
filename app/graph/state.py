@@ -19,13 +19,23 @@ class AgentState(TypedDict, total=False):
         "log_expense",
         "query_finance",
         "delete_entry",
-        "update_expense",   # تعديل مصروف موجود
-        "export_report",    # تصدير تقرير Excel
+        "update_expense",    # تعديل مصروف موجود
+        "export_report",     # تصدير تقرير Excel
+        "log_income",        # تسجيل دخل جديد
+        "query_balance",     # الرصيد = الدخل - المصاريف
+        "add_fixed_payment", # إضافة قسط/فاتورة ثابتة
+        "list_fixed_payments", # عرض الأقساط الثابتة
         "unknown"
     ] | None
 
     # Extraction — single expense
     extracted_data: dict | None
+
+    # Income data
+    income_data: dict | None
+
+    # Fixed payment data
+    fixed_payment_data: dict | None
 
     # Split expenses — أكتر من expense في رسالة واحدة
     split_expenses: list[dict] | None

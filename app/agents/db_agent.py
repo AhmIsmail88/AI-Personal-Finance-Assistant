@@ -1,6 +1,6 @@
 from sqlalchemy import select, text
 from app.database.connection import AsyncSessionLocal
-from app.database.models import User, Category, Expense
+from app.database.models import User, Category, Expense, Income, FixedPayment
 from app.graph.state import AgentState
 from app.agents.date_resolver import (
     detect_date_intent,
@@ -315,6 +315,84 @@ async def execute_operation(state: AgentState) -> AgentState:
                     return {**state, "response": "ما فيش مصاريف لتصديرها بعد! ابدأ بتسجيل مصاريفك أولاً."}
 
                 return {**state, "sql_result": sql_result, "query_key": "export_report"}
+
+            # ── 2f. Log income ────────────────────────────────────────────
+            elif state.get("intent") == "log_income":
+                income_data = state.get("income_data")
+                if not income_data:
+                    return {**state, "response": "ما فيش بيانات دخل. حاول تاني."}
+
+                session.add(Income(
+                    user_id     = state["telegram_id"],
+                    source_type = income_data["source_type"],
+                    description = income_data.get("description"),
+                    amount      = income_data["amount"],
+                    currency    = income_data.get("currency", "EGP"),
+                ))
+                await session.commit()
+                return {**state, "operation_status": "success"}
+
+            # ── 2g. Query balance (income - expenses) ─────────────────────
+            elif state.get("intent") == "query_balance":
+                balance_query = """
+                    SELECT
+                        COALESCE((
+                            SELECT SUM(amount) FROM income
+                            WHERE user_id = :user_id
+                        ), 0) AS total_income,
+                        COALESCE((
+                            SELECT SUM(amount) FROM expenses
+                            WHERE user_id = :user_id
+                        ), 0) AS total_expenses,
+                        COALESCE((
+                            SELECT SUM(amount) FROM fixed_payments
+                            WHERE user_id = :user_id AND is_active = TRUE
+                        ), 0) AS total_fixed_monthly
+                """
+                result = await session.execute(
+                    text(balance_query), {"user_id": state["telegram_id"]}
+                )
+                row = result.fetchone()
+                if row:
+                    d = dict(row._mapping)
+                    d["net_balance"] = float(d["total_income"]) - float(d["total_expenses"])
+                    return {**state, "sql_result": [d], "query_key": "query_balance"}
+                return {**state, "response": "ما فيش بيانات كافية لحساب الرصيد."}
+
+            # ── 2h. Add fixed payment ─────────────────────────────────────
+            elif state.get("intent") == "add_fixed_payment":
+                fp_data = state.get("fixed_payment_data")
+                if not fp_data:
+                    return {**state, "response": "ما فيش بيانات كافية. حاول تاني."}
+
+                session.add(FixedPayment(
+                    user_id            = state["telegram_id"],
+                    name               = fp_data["name"],
+                    amount             = fp_data["amount"],
+                    currency           = fp_data.get("currency", "EGP"),
+                    category           = fp_data["category"],
+                    due_day            = fp_data["due_day"],
+                    remind_days_before = fp_data.get("remind_days_before", 3),
+                    is_active          = True,
+                ))
+                await session.commit()
+                return {**state, "operation_status": "success"}
+
+            # ── 2i. List fixed payments ───────────────────────────────────
+            elif state.get("intent") == "list_fixed_payments":
+                list_query = """
+                    SELECT name, amount, currency, category, due_day, remind_days_before
+                    FROM fixed_payments
+                    WHERE user_id = :user_id AND is_active = TRUE
+                    ORDER BY due_day
+                """
+                result = await session.execute(
+                    text(list_query), {"user_id": state["telegram_id"]}
+                )
+                rows = [dict(row._mapping) for row in result.all()]
+                if not rows:
+                    return {**state, "response": "ما فيش أقساط أو فواتير ثابتة مسجلة بعد. 📋"}
+                return {**state, "sql_result": rows, "query_key": "list_fixed_payments"}
 
             return state
 

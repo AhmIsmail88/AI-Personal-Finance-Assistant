@@ -53,6 +53,37 @@ async def init_db():
                 created_at  TIMESTAMPTZ DEFAULT NOW()
             )
         """)
+        # ── income table ─────────────────────────────────────────────────────
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS income (
+                id          SERIAL PRIMARY KEY,
+                user_id     BIGINT REFERENCES users(telegram_id),
+                source_type VARCHAR(20) NOT NULL
+                            CHECK (source_type IN ('salary','freelance','part_time','other')),
+                description TEXT,
+                amount      NUMERIC(12,2) NOT NULL,
+                currency    VARCHAR(10) DEFAULT 'EGP',
+                received_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+
+        # ── fixed_payments table ──────────────────────────────────────────────
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS fixed_payments (
+                id                 SERIAL PRIMARY KEY,
+                user_id            BIGINT REFERENCES users(telegram_id),
+                name               TEXT NOT NULL,
+                amount             NUMERIC(12,2) NOT NULL,
+                currency           VARCHAR(10) DEFAULT 'EGP',
+                category           VARCHAR(20) NOT NULL
+                                   CHECK (category IN ('rent','loan','utility','subscription','other')),
+                due_day            INTEGER NOT NULL CHECK (due_day BETWEEN 1 AND 31),
+                remind_days_before INTEGER DEFAULT 3,
+                is_active          BOOLEAN DEFAULT TRUE,
+                created_at         TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+
         for cat in ["Food","Transport","Utilities","Entertainment",
                     "Electronics","Health","Education","Shopping","Housing","Other"]:
             await conn.execute(

@@ -65,7 +65,54 @@ async def summarize_response(state: AgentState) -> AgentState:
         }
 
     # ── Build the human_text prompt for the LLM ──────────────────────────────
-    if intent == "log_expense" and status == "success":
+    elif intent == "log_income" and status == "success":
+        income_data = state.get("income_data", {})
+        source_map = {
+            "salary": "راتب شهري 💼",
+            "freelance": "فريلانس 💻",
+            "part_time": "بارت تايم ⏰",
+            "other": "دخل إضافي 💵",
+        }
+        source_label = source_map.get(income_data.get("source_type", "other"), "دخل")
+        human_text = (
+            f"تم تسجيل دخل: {income_data.get('amount')} {income_data.get('currency','EGP')} "
+            f"({source_label}). "
+            "Write a warm 1-2 sentence Arabic confirmation with emoji."
+        )
+
+    elif intent == "query_balance" and sql_result:
+        row = sql_result[0]
+        human_text = (
+            f"إجمالي الدخل: {row.get('total_income')} EGP\n"
+            f"إجمالي المصاريف: {row.get('total_expenses')} EGP\n"
+            f"الأقساط الشهرية الثابتة: {row.get('total_fixed_monthly')} EGP\n"
+            f"صافي المتبقي: {row.get('net_balance')} EGP\n\n"
+            "Summarize this as a clear financial snapshot in Arabic with emojis. "
+            "DO NOT recalculate — use the numbers as-is."
+        )
+
+    elif intent == "add_fixed_payment" and status == "success":
+        fp = state.get("fixed_payment_data", {})
+        human_text = (
+            f"تم إضافة {fp.get('name')} بمبلغ {fp.get('amount')} EGP "
+            f"في يوم {fp.get('due_day')} من كل شهر. "
+            f"سيتم التذكير قبل {fp.get('remind_days_before', 3)} أيام. "
+            "Write a short Arabic confirmation with emoji."
+        )
+
+    elif intent == "list_fixed_payments" and sql_result:
+        items = "\n".join(
+            f"- {r['name']}: {r['amount']} {r['currency']} — يوم {r['due_day']}"
+            for r in sql_result
+        )
+        total = sum(float(r["amount"]) for r in sql_result)
+        human_text = (
+            f"الأقساط والفواتير الثابتة:\n{items}\n"
+            f"الإجمالي الشهري: {round(total, 2)} EGP\n\n"
+            "Present this as a clean Arabic list with emojis. DO NOT recalculate totals."
+        )
+
+    elif intent == "log_expense" and status == "success":
         if split_expenses and len(split_expenses) > 1:
             # Multiple expenses logged in one message
             items_summary = ", ".join(

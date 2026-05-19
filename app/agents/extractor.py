@@ -76,6 +76,56 @@ class UpdateExpenseSchema(BaseModel):
         return v
 
 
+class IncomeSchema(BaseModel):
+    """Extracted income entry."""
+    source_type: Literal["salary", "freelance", "part_time", "other"] = Field(
+        description=(
+            "Type of income source. "
+            "salary=راتب شهري ثابت, freelance=فريلانس, part_time=بارت تايم, other=أخرى"
+        )
+    )
+    description: str | None = Field(
+        default=None,
+        description="Brief description of the income source, e.g. 'شغل بارت تايم', 'مشروع فريلانس'"
+    )
+    amount: float | None = Field(
+        default=None,
+        description="Amount received. Null if not mentioned."
+    )
+    currency: str = Field(default="EGP", description="Currency code. Default EGP.")
+
+    @field_validator("amount")
+    @classmethod
+    def amount_must_be_positive(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError("Amount must be positive.")
+        return v
+
+
+class FixedPaymentSchema(BaseModel):
+    """Extracted recurring bill or installment."""
+    name: str = Field(description="Name of the bill/installment, e.g. 'إيجار', 'قسط سيارة'")
+    amount: float | None = Field(
+        default=None,
+        description="Monthly amount. Null if not mentioned."
+    )
+    currency: str = Field(default="EGP")
+    category: Literal["rent", "loan", "utility", "subscription", "other"] = Field(
+        description=(
+            "Category: rent=إيجار, loan=قرض/قسط, "
+            "utility=فاتورة كهرباء/مياه/غاز, subscription=اشتراك, other=أخرى"
+        )
+    )
+    due_day: int | None = Field(
+        default=None,
+        description="Day of month the payment is due (1-31). Null if not mentioned."
+    )
+    remind_days_before: int = Field(
+        default=3,
+        description="How many days before due_day to send a reminder. Default 3."
+    )
+
+
 # ── System prompts ─────────────────────────────────────────────────────────
 
 EXTRACT_SYSTEM = f"""You are a financial data extraction expert. Extract expense info and respond ONLY with valid JSON.
@@ -97,7 +147,31 @@ Return ONLY this JSON, nothing else:
 {{"expenses": [{{"item": "...", "amount": 80.0, "currency": "EGP", "category": "Food"}}], "needs_split_clarification": false, "clarification_question": null}}"""
 
 
-UPDATE_SYSTEM = f"""You are a financial data extraction expert. The user wants to UPDATE their last expense.
+INCOME_SYSTEM = """You are a financial data extraction expert. The user is logging income they received.
+Extract the income details and respond ONLY with valid JSON.
+
+source_type must be exactly one of:
+- salary      → راتب شهري ثابت, monthly salary
+- freelance   → فريلانس, مشروع, project
+- part_time   → بارت تايم, شغل جانبي
+- other       → أي مصدر تاني
+
+Return ONLY this JSON:
+{"source_type": "salary", "description": "...", "amount": 5000.0, "currency": "EGP"}"""
+
+
+FIXED_PAYMENT_SYSTEM = """You are a financial data extraction expert. The user is adding a recurring monthly bill or installment.
+Extract the details and respond ONLY with valid JSON.
+
+category must be exactly one of:
+- rent         → إيجار
+- loan         → قرض, قسط سيارة, قسط بنك
+- utility      → كهرباء, مياه, غاز, إنترنت, تليفون
+- subscription → اشتراك, Netflix, Spotify
+- other        → أي حاجة تانية
+
+Return ONLY this JSON:
+{"name": "إيجار", "amount": 2000.0, "currency": "EGP", "category": "rent", "due_day": 1, "remind_days_before": 3}"""
 Extract what they want to change and respond ONLY with valid JSON.
 
 Fields they might want to change:
@@ -127,6 +201,76 @@ async def extract_data(state: AgentState) -> AgentState:
         temperature=0.0,
         max_tokens=400,
     )
+
+    # ── Income extraction ────────────────────────────────────────────────
+    if intent == "log_income":
+        try:
+            structured_llm = llm.with_structured_output(IncomeSchema, method="json_mode")
+            data: IncomeSchema = await structured_llm.ainvoke([
+                SystemMessage(content=INCOME_SYSTEM),
+                HumanMessage(
+                    content=f"Conversation context:\n{history}\n\nUser message: {state['user_message']}"
+                )
+            ])
+            if data.amount is None:
+                return {
+                    **state,
+                    "needs_clarification": True,
+                    "clarification_question": "كام المبلغ اللي استلمته؟ 💰",
+                }
+            return {
+                **state,
+                "income_data": data.model_dump(),
+                "needs_clarification": False,
+                "clarification_question": None,
+            }
+        except Exception as e:
+            print(f"Income extractor error: {e}")
+            return {
+                **state,
+                "error": str(e),
+                "needs_clarification": True,
+                "clarification_question": "مش فاهم. جرب: 'قبضت 5000 راتب' أو 'استلمت 1200 فريلانس'",
+            }
+
+    # ── Fixed payment extraction ─────────────────────────────────────────
+    if intent == "add_fixed_payment":
+        try:
+            structured_llm = llm.with_structured_output(FixedPaymentSchema, method="json_mode")
+            data: FixedPaymentSchema = await structured_llm.ainvoke([
+                SystemMessage(content=FIXED_PAYMENT_SYSTEM),
+                HumanMessage(
+                    content=f"Conversation context:\n{history}\n\nUser message: {state['user_message']}"
+                )
+            ])
+            if data.amount is None:
+                return {
+                    **state,
+                    "fixed_payment_data": data.model_dump(),
+                    "needs_clarification": True,
+                    "clarification_question": f"كام مبلغ {data.name}؟ 💳",
+                }
+            if data.due_day is None:
+                return {
+                    **state,
+                    "fixed_payment_data": data.model_dump(),
+                    "needs_clarification": True,
+                    "clarification_question": f"في أنهي يوم من الشهر بيستحق {data.name}؟ 📅",
+                }
+            return {
+                **state,
+                "fixed_payment_data": data.model_dump(),
+                "needs_clarification": False,
+                "clarification_question": None,
+            }
+        except Exception as e:
+            print(f"Fixed payment extractor error: {e}")
+            return {
+                **state,
+                "error": str(e),
+                "needs_clarification": True,
+                "clarification_question": "مش فاهم. جرب: 'عندي قسط سيارة 800 جنيه كل أول الشهر'",
+            }
 
     # ── Update expense extraction ────────────────────────────────────────
     if intent == "update_expense":
