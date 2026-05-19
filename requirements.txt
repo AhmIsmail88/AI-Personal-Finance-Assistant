@@ -1,0 +1,15 @@
+python-telegram-bot[webhooks]>=21.0
+fastapi
+uvicorn[standard]
+langgraph>=0.2
+langgraph-checkpoint-postgres
+langchain-core
+langchain-openai
+sqlalchemy[asyncio]
+asyncpg
+psycopg[binary]
+psycopg-pool
+python-dotenv
+pydantic>=2.0
+pydantic-settings
+openpyxl
