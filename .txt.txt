@@ -1,1 +1,0 @@
-https://api.telegram.org/bot8609678490:AAGi_1EOzQU6bNRHE_qZOlk3Bx_CCYHyf6s/setWebhook?url=https://ai-personal-finance-assistant-production.up.railway.app/webhook
