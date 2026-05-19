@@ -114,6 +114,48 @@ QUERY_TEMPLATES = {
         SELECT item, amount, currency, created_at FROM expenses
         WHERE user_id = :user_id ORDER BY created_at DESC LIMIT :limit
     """,
+    # ── Income queries ──────────────────────────────────────────────────────
+    "income_total_all_time": """
+        SELECT ROUND(SUM(amount)::numeric, 2) AS total, currency FROM income
+        WHERE user_id = :user_id
+        GROUP BY currency
+    """,
+    "income_total_this_month": """
+        SELECT ROUND(SUM(amount)::numeric, 2) AS total, currency FROM income
+        WHERE user_id = :user_id AND received_at >= :since
+        GROUP BY currency
+    """,
+    "income_total_today": """
+        SELECT ROUND(SUM(amount)::numeric, 2) AS total, currency FROM income
+        WHERE user_id = :user_id AND DATE(received_at) = :target_date
+        GROUP BY currency
+    """,
+    "income_total_yesterday": """
+        SELECT ROUND(SUM(amount)::numeric, 2) AS total, currency FROM income
+        WHERE user_id = :user_id AND DATE(received_at) = :target_date
+        GROUP BY currency
+    """,
+    "income_total_this_week": """
+        SELECT ROUND(SUM(amount)::numeric, 2) AS total, currency FROM income
+        WHERE user_id = :user_id AND received_at >= :since
+        GROUP BY currency
+    """,
+    "income_report_half_year": """
+        SELECT TO_CHAR(DATE_TRUNC('month', received_at), 'YYYY-MM') AS month,
+            ROUND(SUM(amount)::numeric, 2) AS total, currency
+        FROM income WHERE user_id = :user_id AND received_at >= :since
+        GROUP BY DATE_TRUNC('month', received_at), currency ORDER BY month
+    """,
+    "income_report_yearly": """
+        SELECT TO_CHAR(DATE_TRUNC('month', received_at), 'YYYY-MM') AS month,
+            ROUND(SUM(amount)::numeric, 2) AS total, currency
+        FROM income WHERE user_id = :user_id AND received_at >= :since
+        GROUP BY DATE_TRUNC('month', received_at), currency ORDER BY month
+    """,
+    "recent_income": """
+        SELECT source_type, description, amount, currency, received_at FROM income
+        WHERE user_id = :user_id ORDER BY received_at DESC LIMIT :limit
+    """,
 }
 
 
@@ -138,6 +180,8 @@ def _select_query(user_message: str, user_id: int) -> tuple[str, dict]:
         now_utc = datetime.now(timezone.utc)
         params = resolve_date_params(date_key, now_utc)
         params["user_id"] = user_id
+        if any(k in msg for k in ["income", "دخل", "راتب", "قبضت"]):
+            date_key = "income_" + date_key
         return date_key, params
 
     # ── Category breakdown — Bug #7 fix ──────────────────────────────────
@@ -148,17 +192,25 @@ def _select_query(user_message: str, user_id: int) -> tuple[str, dict]:
     # ── Listing / recent ─────────────────────────────────────────────────
     if any(k in msg for k in ["last", "recent", "show", "list",
                                "آخر", "الأخيرة", "وريني", "اعرضلي"]):
+        if any(k in msg for k in ["income", "دخل", "راتب", "قبضت"]):
+            return "recent_income", {"user_id": user_id, "limit": 5}
         return "recent_expenses", {"user_id": user_id, "limit": 5}
 
     if any(k in msg for k in ["history", "تاريخ", "سجل"]):
+        if any(k in msg for k in ["income", "دخل", "راتب", "قبضت"]):
+            return "recent_income", {"user_id": user_id, "limit": 10}
         return "recent_expenses", {"user_id": user_id, "limit": 10}
 
     # ── Generic totals ────────────────────────────────────────────────────
     if any(k in msg for k in ["how much", "total", "so far", "spent", "all",
                                "كام", "إجمالي", "مجموع", "كم", "صرفت"]):
+        if any(k in msg for k in ["income", "دخل", "راتب", "قبضت"]):
+            return "income_total_all_time", {"user_id": user_id}
         return "total_all_time", {"user_id": user_id}
 
     # Fallback
+    if any(k in msg for k in ["income", "دخل", "راتب", "قبضت"]):
+        return "recent_income", {"user_id": user_id, "limit": 5}
     return "recent_expenses", {"user_id": user_id, "limit": 5}
 
 
@@ -236,7 +288,13 @@ async def execute_operation(state: AgentState) -> AgentState:
                 sql_result = [dict(row._mapping) for row in result.all()]
 
                 if not sql_result or all(v is None for row in sql_result for v in row.values()):
-                    return {**state, "response": "No expenses found yet! Start by logging one."}
+                    is_income_query = query_key and query_key.startswith("income_")
+                    no_data_msg = (
+                        "ما فيش دخل مسجل بعد في الفترة دي! سجّل دخلك بكتابة: 'قبضت 5000 راتب' 💰"
+                        if is_income_query
+                        else "No expenses found yet! Start by logging one."
+                    )
+                    return {**state, "response": no_data_msg}
 
                 return {**state, "sql_result": sql_result, "query_key": query_key}
 

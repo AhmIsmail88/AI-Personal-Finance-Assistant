@@ -138,11 +138,34 @@ async def summarize_response(state: AgentState) -> AgentState:
     elif intent == "delete_entry" and status == "success":
         human_text = "The user's last expense was deleted. Write a brief, friendly confirmation."
     elif sql_result:
-        human_text = (
-            f"The user asked: '{state.get('user_message')}'\n\n"
-            f"Database results: {sql_result}\n\n"
-            "Summarize this naturally. DO NOT do any math yourself."
-        )
+        query_key = state.get("query_key", "")
+        # ── Income query result ───────────────────────────────────────────
+        if query_key and query_key.startswith("income_"):
+            if query_key == "recent_income":
+                items = "\n".join(
+                    f"- {r.get('source_type','other')}: {r.get('amount')} {r.get('currency','EGP')} "
+                    f"({r.get('description') or 'بدون وصف'}) — {str(r.get('received_at',''))[:10]}"
+                    for r in sql_result
+                )
+                human_text = (
+                    f"The user asked: '{state.get('user_message')}'\n\n"
+                    f"Recent income records from the database:\n{items}\n\n"
+                    "Summarize this as a clean Arabic income history with emojis. DO NOT do any math."
+                )
+            else:
+                human_text = (
+                    f"The user asked: '{state.get('user_message')}'\n\n"
+                    f"Income query results from the database: {sql_result}\n\n"
+                    "This is INCOME data (not expenses). Summarize clearly in Arabic with emojis. "
+                    "DO NOT do any math yourself — use the numbers as-is."
+                )
+        else:
+            # ── Expense/general query result ──────────────────────────────
+            human_text = (
+                f"The user asked: '{state.get('user_message')}'\n\n"
+                f"Database results: {sql_result}\n\n"
+                "Summarize this naturally. DO NOT do any math yourself."
+            )
     else:
         msg = "No data found for that request. Try asking differently!"
         return {

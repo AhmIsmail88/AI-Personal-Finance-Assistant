@@ -172,6 +172,8 @@ category must be exactly one of:
 
 Return ONLY this JSON:
 {"name": "إيجار", "amount": 2000.0, "currency": "EGP", "category": "rent", "due_day": 1, "remind_days_before": 3}"""
+
+
 UPDATE_SYSTEM = f"""You are a financial data extraction expert.
 Extract what they want to change and respond ONLY with valid JSON.
 
