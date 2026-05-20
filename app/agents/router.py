@@ -39,7 +39,7 @@ async def route_request(state: AgentState) -> AgentState:
     structured_llm = llm.with_structured_output(RouterOutput, method="json_mode")
 
     current_date = state.get("current_date", "Unknown Date")
-    prompt_sys = f"""You are a finance assistant router. Classify the user intent and respond ONLY in JSON.
+    prompt_sys_raw = f"""You are a finance assistant router. Classify the user intent and respond ONLY in JSON.
 
 التاريخ والوقت الحالي هو: {current_date}. 
 استخدم هذا التاريخ كمرجع أساسي لحساب التواريخ عند ذكر المستخدم لكلمات مثل 'اليوم'، 'أمس'، أو 'الشهر الماضي'.
@@ -67,7 +67,8 @@ async def route_request(state: AgentState) -> AgentState:
 تحذير: لا تخلط أبداً بين طلب الاستعلام (Query) وطلب الإضافة (Add). إذا كان المستخدم يسأل (بوجود أدوات استفهام أو بصيغة طلب معلومات)، فالنية حتماً هي `query_finance`.
 
 JSON schema to return:
-{{{{ "intent": "log_expense|query_finance|delete_entry|update_expense|export_report|log_income|query_balance|add_fixed_payment|list_fixed_payments|unknown", "clarification_needed": true|false, "clarification_question": "string or null" }}}}"""
+{ "intent": "log_expense|query_finance|delete_entry|update_expense|export_report|log_income|query_balance|add_fixed_payment|list_fixed_payments|unknown", "clarification_needed": true|false, "clarification_question": "string or null" }"""
+    prompt_sys = prompt_sys_raw.replace("{", "{{").replace("}", "}}")
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", prompt_sys),
