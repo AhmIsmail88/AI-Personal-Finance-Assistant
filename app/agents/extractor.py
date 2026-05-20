@@ -128,61 +128,73 @@ class FixedPaymentSchema(BaseModel):
 
 # ── System prompts ─────────────────────────────────────────────────────────
 
-EXTRACT_SYSTEM = f"""You are a financial data extraction expert. Extract expense info and respond ONLY with valid JSON.
+EXTRACT_SYSTEM = f"""\
+أنت خبير استخراج بيانات مالية. مهمتك استخراج تفاصيل المصروف من رسالة المستخدم والرد بـ JSON فقط.
 
-Rules:
-- item: what was bought (e.g. "pizza", "taxi", "electricity")
-- amount: float or null (only null if truly not mentioned)
-- currency: e.g. EGP, USD. Default "EGP"
+قواعد الاستخراج:
+- item: ما تم شراؤه (مثال: "قهوة", "تاكسي", "كهرباء", "pizza")
+- amount: رقم عشري موجب أو null لو مش مذكور
+- currency: رمز العملة — افتراضي "EGP"
 - category: MUST be exactly one of: {", ".join(CATEGORIES)}
-  Examples: pizza→Food, taxi→Transport, rent→Housing, electricity→Utilities,
-  phone→Electronics, doctor→Health, book→Education, clothes→Shopping
+  أمثلة: قهوة/أكل → Food, تاكسي/أوبر → Transport, إيجار → Housing,
+  كهرباء/مياه → Utilities, موبايل/لاب توب → Electronics,
+  دكتور/دواء → Health, كتاب/كورس → Education, هدوم/شنطة → Shopping
 
-- If the user mentions multiple different items/categories, return multiple expenses in the list.
-- If the user mentions multiple categories but only one total amount (ambiguous split),
-  set needs_split_clarification=true and ask how they want to split it.
-- All amounts must be positive numbers.
+قواعد خاصة:
+- لو المستخدم ذكر أكتر من بند بمبالغ منفصلة → أرجع قائمة expenses متعددة
+- لو ذكر أكتر من بند بمبلغ واحد مشترك → اضبط needs_split_clarification=true واسأل عن التقسيم
+- لو السياق (conversation_history) يحتوي على سؤال عن المبلغ ورد المستخدم برقم → استخدم ذلك الرقم كـ amount
+- كل المبالغ يجب أن تكون أرقام موجبة
 
-Return ONLY this JSON, nothing else:
+أرجع JSON فقط بالشكل ده:
 {{"expenses": [{{"item": "...", "amount": 80.0, "currency": "EGP", "category": "Food"}}], "needs_split_clarification": false, "clarification_question": null}}"""
 
 
-INCOME_SYSTEM = """You are a financial data extraction expert. The user is logging income they received.
-Extract the income details and respond ONLY with valid JSON.
+INCOME_SYSTEM = """\
+أنت خبير استخراج بيانات مالية. المستخدم يسجّل دخلاً استلمه.
+استخرج تفاصيل الدخل من الرسالة والسياق وأرجع JSON فقط.
 
-source_type must be exactly one of:
-- salary      → راتب شهري ثابت, monthly salary
-- freelance   → فريلانس, مشروع, project
-- part_time   → بارت تايم, شغل جانبي
-- other       → أي مصدر تاني
+source_type يجب أن يكون بالضبط واحداً من:
+- salary    → راتب شهري ثابت, monthly salary, راتب
+- freelance → فريلانس, مشروع, project, شغل حر
+- part_time → بارت تايم, شغل جانبي, part time
+- other     → أي مصدر تاني
 
-Return ONLY this JSON:
-{"source_type": "salary", "description": "...", "amount": 5000.0, "currency": "EGP"}"""
+مهم: لو السياق (conversation_history) يحتوي على سؤال عن المبلغ ورد المستخدم برقم، استخدم ذلك الرقم كـ amount.
+
+أرجع JSON فقط:
+{"source_type": "salary", "description": "وصف اختياري", "amount": 5000.0, "currency": "EGP"}"""
 
 
-FIXED_PAYMENT_SYSTEM = """You are a financial data extraction expert. The user is adding a recurring monthly bill or installment.
-Extract the details and respond ONLY with valid JSON.
+FIXED_PAYMENT_SYSTEM = """\
+أنت خبير استخراج بيانات مالية. المستخدم يضيف قسطاً أو فاتورة شهرية ثابتة.
+استخرج التفاصيل وأرجع JSON فقط.
 
-category must be exactly one of:
-- rent         → إيجار
-- loan         → قرض, قسط سيارة, قسط بنك
-- utility      → كهرباء, مياه, غاز, إنترنت, تليفون
-- subscription → اشتراك, Netflix, Spotify
+category يجب أن يكون بالضبط واحداً من:
+- rent         → إيجار, ايجار
+- loan         → قرض, قسط سيارة, قسط بنك, تقسيط
+- utility      → كهرباء, مياه, غاز, إنترنت, تليفون, فاتورة
+- subscription → اشتراك, Netflix, Spotify, نتفليكس
 - other        → أي حاجة تانية
 
-Return ONLY this JSON:
+due_day: يوم من الشهر (1-31) — لو مش مذكور اضبطه null
+remind_days_before: عدد أيام التذكير قبل الموعد — افتراضي 3
+
+أرجع JSON فقط:
 {"name": "إيجار", "amount": 2000.0, "currency": "EGP", "category": "rent", "due_day": 1, "remind_days_before": 3}"""
 
 
-UPDATE_SYSTEM = f"""You are a financial data extraction expert.
-Extract what they want to change and respond ONLY with valid JSON.
+UPDATE_SYSTEM = f"""أنت خبير استخراج بيانات مالية. المستخدم يريد تعديل آخر مصروف مسجّل.
+استخرج فقط الحقول التي يريد تغييرها وأرجع JSON فقط.
 
-Fields they might want to change:
-- new_amount: the new amount (positive float), or null if not changing
-- new_category: must be one of: {", ".join(CATEGORIES)}, or null if not changing
-- new_item: the new item name/description, or null if not changing
+الحقول القابلة للتعديل:
+- new_amount: المبلغ الجديد (رقم موجب) أو null لو مش هيتغير
+- new_category: الفئة الجديدة — لازم تكون من: {", ".join(CATEGORIES)} — أو null
+- new_item: الوصف الجديد للبند أو null
 
-Return ONLY this JSON:
+مهم: نحن نعدّل دايماً آخر مصروف مسجّل، مش أي مصروف تاني.
+
+أرجع JSON فقط:
 {{"new_amount": null, "new_category": "Food", "new_item": null}}"""
 
 

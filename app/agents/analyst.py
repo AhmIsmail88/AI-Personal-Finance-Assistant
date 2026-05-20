@@ -3,20 +3,22 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from app.config import settings
 from app.graph.state import AgentState
 
-SYSTEM = """You are a warm, professional personal finance assistant.
-Write concise, friendly responses. DO NOT calculate anything — all numbers come from the database.
-Use relevant emojis naturally. Keep it to 1-3 sentences.
-Always respond in the same language the user used (Arabic or English)."""
+SYSTEM = """\
+أنت مساعد مالي شخصي دافئ ومحترف.
+- اكتب ردوداً موجزة وودية (1-3 جمل).
+- لا تحسب أي أرقام بنفسك — كل الأرقام تأتي من قاعدة البيانات.
+- استخدم الإيموجي بشكل طبيعي.
+- رد دائماً بنفس لغة المستخدم (عربي أو إنجليزي).
+- لا تذكر أي تفاصيل تقنية أو أخطاء للمستخدم.
+"""
 
 
 async def summarize_response(state: AgentState) -> AgentState:
     history = state.get("conversation_history", [])
 
-    # ── Clarification needed (from router OR extractor) ─────────────────────
+    # ── توضيح مطلوب ──────────────────────────────────────────────────────────
     if state.get("needs_clarification"):
-        question = state.get("clarification_question", "Could you please clarify?")
-        # The question is already in history (added by router/extractor),
-        # but if it somehow isn't, append it now.
+        question = state.get("clarification_question", "ممكن توضح أكتر؟ 🙏")
         if not history or history[-1] != ("assistant", question):
             history = history + [("assistant", question)]
         return {
@@ -25,30 +27,31 @@ async def summarize_response(state: AgentState) -> AgentState:
             "conversation_history": history,
         }
 
-    # ── Hard error ───────────────────────────────────────────────────────────
+    # ── خطأ ──────────────────────────────────────────────────────────────────
     if state.get("error"):
-        msg = "I ran into a bit of trouble. Please try again! 🙏"
+        msg = "حصل خطأ غير متوقع، حاول تاني. 🙏"
         return {
             **state,
             "response": msg,
             "conversation_history": history + [("assistant", msg)],
         }
 
-    intent = state.get("intent")
-    status = state.get("operation_status")
-    extracted = state.get("extracted_data", {})
-    sql_result = state.get("sql_result")
+    intent   = state.get("intent")
+    status   = state.get("operation_status")
+    extracted    = state.get("extracted_data") or {}
+    sql_result   = state.get("sql_result")
     split_expenses = state.get("split_expenses")
 
-    # ── Unknown / off-topic intent — politely redirect ───────────────────────
+    # ── Intent غير معروف ─────────────────────────────────────────────────────
     if intent == "unknown" or (not intent):
         msg = (
-            "I'm your personal finance assistant 💰 — I can help you:\n"
-            "• Log expenses (e.g. *'spent 80 EGP on pizza'*)\n"
-            "• Check your spending (e.g. *'how much did I spend today?'*)\n"
-            "• Delete or update your last entry\n"
-            "• Export a full report to Excel 📊\n\n"
-            "What would you like to do?"
+            "أنا مساعدك المالي الشخصي 💰 — أقدر أساعدك في:\n"
+            "• تسجيل مصاريفك 📝\n"
+            "• تسجيل دخلك 💵\n"
+            "• الاستعلام عن إنفاقك ورصيدك 📊\n"
+            "• حذف أو تعديل مصروف 🗑️\n"
+            "• تصدير تقرير Excel 📁\n\n"
+            "جرب: 'صرفت 50 جنيه على الأكل'"
         )
         return {
             **state,
@@ -56,90 +59,104 @@ async def summarize_response(state: AgentState) -> AgentState:
             "conversation_history": history + [("assistant", msg)],
         }
 
-    # ── Export report — analyst steps aside, handler sends the file ──────────
+    # ── Export — الـ handler هيبعت الملف مباشرة ──────────────────────────────
     if intent == "export_report" and sql_result:
-        # Return no response text — telegram_handler will send the Excel file
-        return {
-            **state,
-            "response": None,
-        }
+        return {**state, "response": None}
 
-    # ── Build the human_text prompt for the LLM ──────────────────────────────
-    elif intent == "log_income" and status == "success":
-        income_data = state.get("income_data", {})
+    # ── بناء الـ human_text للـ LLM ───────────────────────────────────────────
+    human_text = None
+
+    if intent == "log_income" and status == "success":
+        income_data = state.get("income_data") or {}
         source_map = {
-            "salary": "راتب شهري 💼",
+            "salary":    "راتب شهري 💼",
             "freelance": "فريلانس 💻",
             "part_time": "بارت تايم ⏰",
-            "other": "دخل إضافي 💵",
+            "other":     "دخل إضافي 💵",
         }
         source_label = source_map.get(income_data.get("source_type", "other"), "دخل")
         human_text = (
-            f"تم تسجيل دخل: {income_data.get('amount')} {income_data.get('currency','EGP')} "
-            f"({source_label}). "
-            "Write a warm 1-2 sentence Arabic confirmation with emoji."
+            f"تم تسجيل دخل بنجاح: {income_data.get('amount')} {income_data.get('currency','EGP')} "
+            f"({source_label}).\n"
+            "اكتب رسالة تأكيد عربية ودية بإيموجي مناسب. جملة أو جملتين."
         )
 
     elif intent == "query_balance" and sql_result:
         row = sql_result[0]
         human_text = (
-            f"إجمالي الدخل: {row.get('total_income')} EGP\n"
-            f"إجمالي المصاريف: {row.get('total_expenses')} EGP\n"
-            f"الأقساط الشهرية الثابتة: {row.get('total_fixed_monthly')} EGP\n"
-            f"صافي المتبقي: {row.get('net_balance')} EGP\n\n"
-            "Summarize this as a clear financial snapshot in Arabic with emojis. "
-            "DO NOT recalculate — use the numbers as-is."
+            f"نتائج قاعدة البيانات:\n"
+            f"- إجمالي الدخل: {row.get('total_income')} EGP\n"
+            f"- إجمالي المصاريف: {row.get('total_expenses')} EGP\n"
+            f"- الأقساط الثابتة الشهرية: {row.get('total_fixed_monthly')} EGP\n"
+            f"- صافي المتبقي: {row.get('net_balance')} EGP\n\n"
+            "قدّم هذه الأرقام كلقطة مالية واضحة بالعربي مع إيموجي. "
+            "لا تعيد حساب أي رقم — استخدم الأرقام كما هي."
         )
 
     elif intent == "add_fixed_payment" and status == "success":
-        fp = state.get("fixed_payment_data", {})
+        fp = state.get("fixed_payment_data") or {}
         human_text = (
-            f"تم إضافة {fp.get('name')} بمبلغ {fp.get('amount')} EGP "
+            f"تم إضافة '{fp.get('name')}' بمبلغ {fp.get('amount')} EGP "
             f"في يوم {fp.get('due_day')} من كل شهر. "
-            f"سيتم التذكير قبل {fp.get('remind_days_before', 3)} أيام. "
-            "Write a short Arabic confirmation with emoji."
+            f"التذكير سيُرسل قبل {fp.get('remind_days_before', 3)} أيام.\n"
+            "اكتب تأكيداً عربياً قصيراً بإيموجي."
         )
 
     elif intent == "list_fixed_payments" and sql_result:
         items = "\n".join(
-            f"- {r['name']}: {r['amount']} {r['currency']} — يوم {r['due_day']}"
+            f"- {r['name']}: {r['amount']} {r.get('currency','EGP')} — يوم {r['due_day']}"
             for r in sql_result
         )
         total = sum(float(r["amount"]) for r in sql_result)
         human_text = (
-            f"الأقساط والفواتير الثابتة:\n{items}\n"
+            f"الأقساط والفواتير الثابتة المسجلة:\n{items}\n"
             f"الإجمالي الشهري: {round(total, 2)} EGP\n\n"
-            "Present this as a clean Arabic list with emojis. DO NOT recalculate totals."
+            "اعرضها كقائمة عربية واضحة بإيموجي. لا تعيد حساب الإجمالي."
         )
 
     elif intent == "log_expense" and status == "success":
         if split_expenses and len(split_expenses) > 1:
-            # Multiple expenses logged in one message
             items_summary = ", ".join(
                 f"{e.get('item')} ({e.get('amount')} {e.get('currency', 'EGP')})"
                 for e in split_expenses
             )
             human_text = (
                 f"تم تسجيل {len(split_expenses)} مصاريف بنجاح: {items_summary}.\n"
-                "Write a friendly confirmation mentioning all items with a relevant emoji."
+                "اكتب تأكيداً عربياً ودياً يذكر كل البنود مع إيموجي مناسب."
             )
         else:
             human_text = (
-                f"The user logged: {extracted.get('item')} for {extracted.get('amount')} "
-                f"{extracted.get('currency', 'EGP')} (category: {extracted.get('category')}).\n"
-                "Write a friendly 1-2 sentence confirmation with a relevant emoji."
+                f"تم تسجيل مصروف: {extracted.get('item')} "
+                f"بمبلغ {extracted.get('amount')} {extracted.get('currency', 'EGP')} "
+                f"(فئة: {extracted.get('category')}).\n"
+                "اكتب تأكيداً عربياً ودياً بجملة أو جملتين مع إيموجي مناسب."
             )
+
     elif intent == "update_expense" and status == "success":
-        update_data = state.get("update_data", {})
+        update_data = state.get("update_data") or {}
         human_text = (
-            f"The user's last expense was updated. Changes: {update_data}.\n"
-            "Write a brief, friendly Arabic+emoji confirmation of the update."
+            f"تم تحديث آخر مصروف بنجاح. التغييرات: {update_data}.\n"
+            "اكتب تأكيداً عربياً قصيراً ودياً بإيموجي."
         )
+
     elif intent == "delete_entry" and status == "success":
-        human_text = "The user's last expense was deleted. Write a brief, friendly confirmation."
+        human_text = (
+            "تم حذف آخر مصروف بنجاح.\n"
+            "اكتب تأكيداً عربياً قصيراً ودياً بإيموجي."
+        )
+
+    elif intent == "delete_entry" and status == "cancelled":
+        msg = "تمام! ✅ المصروف اتحتفظ بيه."
+        return {
+            **state,
+            "response": msg,
+            "conversation_history": history + [("assistant", msg)],
+        }
+
     elif sql_result:
         query_key = state.get("query_key", "")
-        # ── Income query result ───────────────────────────────────────────
+        user_msg  = state.get("user_message", "")
+
         if query_key and query_key.startswith("income_"):
             if query_key == "recent_income":
                 items = "\n".join(
@@ -148,26 +165,27 @@ async def summarize_response(state: AgentState) -> AgentState:
                     for r in sql_result
                 )
                 human_text = (
-                    f"The user asked: '{state.get('user_message')}'\n\n"
-                    f"Recent income records from the database:\n{items}\n\n"
-                    "Summarize this as a clean Arabic income history with emojis. DO NOT do any math."
+                    f"المستخدم سأل: '{user_msg}'\n\n"
+                    f"سجلات الدخل من قاعدة البيانات:\n{items}\n\n"
+                    "اعرضها كتاريخ دخل عربي واضح بإيموجي. لا تجري أي حسابات."
                 )
             else:
                 human_text = (
-                    f"The user asked: '{state.get('user_message')}'\n\n"
-                    f"Income query results from the database: {sql_result}\n\n"
-                    "This is INCOME data (not expenses). Summarize clearly in Arabic with emojis. "
-                    "DO NOT do any math yourself — use the numbers as-is."
+                    f"المستخدم سأل: '{user_msg}'\n\n"
+                    f"نتائج استعلام الدخل من قاعدة البيانات: {sql_result}\n\n"
+                    "هذه بيانات دخل (مش مصاريف). لخّصها بالعربي بوضوح مع إيموجي. "
+                    "لا تحسب أي رقم — استخدم الأرقام كما هي."
                 )
         else:
-            # ── Expense/general query result ──────────────────────────────
             human_text = (
-                f"The user asked: '{state.get('user_message')}'\n\n"
-                f"Database results: {sql_result}\n\n"
-                "Summarize this naturally. DO NOT do any math yourself."
+                f"المستخدم سأل: '{user_msg}'\n\n"
+                f"نتائج قاعدة البيانات: {sql_result}\n\n"
+                "لخّص هذه النتائج بشكل طبيعي وودي بالعربي. لا تجري أي حسابات."
             )
-    else:
-        msg = "No data found for that request. Try asking differently!"
+
+    # ── مفيش بيانات ──────────────────────────────────────────────────────────
+    if human_text is None:
+        msg = "ما لقيتش بيانات لهذا الطلب. جرب بطريقة تانية! 🤔"
         return {
             **state,
             "response": msg,

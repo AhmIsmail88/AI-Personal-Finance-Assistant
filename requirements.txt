@@ -13,3 +13,4 @@ python-dotenv
 pydantic>=2.0
 pydantic-settings
 openpyxl
+tzdata
