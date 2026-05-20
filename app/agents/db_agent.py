@@ -60,30 +60,31 @@ QUERY_TEMPLATES = {
         GROUP BY c.name ORDER BY total DESC
     """,
 
-    # ── Period totals ───────────────────────────────────────────────────────
-    # Fix: total_this_month now uses :since from date_resolver (not NOW())
+    # ── Period totals — Egypt timezone fix ─────────────────────────────────
+    # DATE(created_at AT TIME ZONE 'Africa/Cairo') ensures dates match
+    # what the user sees on their Egyptian phone, not UTC
     "total_this_month": """
         SELECT ROUND(SUM(amount)::numeric, 2) AS total, currency FROM expenses
         WHERE user_id = :user_id
-          AND created_at >= :since
+          AND DATE(created_at AT TIME ZONE 'Africa/Cairo') >= :since
         GROUP BY currency
     """,
     "total_today": """
         SELECT ROUND(SUM(amount)::numeric, 2) AS total, currency FROM expenses
         WHERE user_id = :user_id
-          AND DATE(created_at) = :target_date
+          AND DATE(created_at AT TIME ZONE 'Africa/Cairo') = :target_date
         GROUP BY currency
     """,
     "total_yesterday": """
         SELECT ROUND(SUM(amount)::numeric, 2) AS total, currency FROM expenses
         WHERE user_id = :user_id
-          AND DATE(created_at) = :target_date
+          AND DATE(created_at AT TIME ZONE 'Africa/Cairo') = :target_date
         GROUP BY currency
     """,
     "total_this_week": """
         SELECT ROUND(SUM(amount)::numeric, 2) AS total, currency FROM expenses
         WHERE user_id = :user_id
-          AND created_at >= :since
+          AND DATE(created_at AT TIME ZONE 'Africa/Cairo') >= :since
         GROUP BY currency
     """,
 
@@ -114,7 +115,7 @@ QUERY_TEMPLATES = {
         SELECT item, amount, currency, created_at FROM expenses
         WHERE user_id = :user_id ORDER BY created_at DESC LIMIT :limit
     """,
-    # ── Income queries ──────────────────────────────────────────────────────
+    # ── Income queries — Egypt timezone fix ────────────────────────────────
     "income_total_all_time": """
         SELECT ROUND(SUM(amount)::numeric, 2) AS total, currency FROM income
         WHERE user_id = :user_id
@@ -122,35 +123,41 @@ QUERY_TEMPLATES = {
     """,
     "income_total_this_month": """
         SELECT ROUND(SUM(amount)::numeric, 2) AS total, currency FROM income
-        WHERE user_id = :user_id AND received_at >= :since
+        WHERE user_id = :user_id
+          AND DATE(received_at AT TIME ZONE 'Africa/Cairo') >= :since
         GROUP BY currency
     """,
     "income_total_today": """
         SELECT ROUND(SUM(amount)::numeric, 2) AS total, currency FROM income
-        WHERE user_id = :user_id AND DATE(received_at) = :target_date
+        WHERE user_id = :user_id
+          AND DATE(received_at AT TIME ZONE 'Africa/Cairo') = :target_date
         GROUP BY currency
     """,
     "income_total_yesterday": """
         SELECT ROUND(SUM(amount)::numeric, 2) AS total, currency FROM income
-        WHERE user_id = :user_id AND DATE(received_at) = :target_date
+        WHERE user_id = :user_id
+          AND DATE(received_at AT TIME ZONE 'Africa/Cairo') = :target_date
         GROUP BY currency
     """,
     "income_total_this_week": """
         SELECT ROUND(SUM(amount)::numeric, 2) AS total, currency FROM income
-        WHERE user_id = :user_id AND received_at >= :since
+        WHERE user_id = :user_id
+          AND DATE(received_at AT TIME ZONE 'Africa/Cairo') >= :since
         GROUP BY currency
     """,
     "income_report_half_year": """
-        SELECT TO_CHAR(DATE_TRUNC('month', received_at), 'YYYY-MM') AS month,
+        SELECT TO_CHAR(DATE_TRUNC('month', received_at AT TIME ZONE 'Africa/Cairo'), 'YYYY-MM') AS month,
             ROUND(SUM(amount)::numeric, 2) AS total, currency
-        FROM income WHERE user_id = :user_id AND received_at >= :since
-        GROUP BY DATE_TRUNC('month', received_at), currency ORDER BY month
+        FROM income WHERE user_id = :user_id
+          AND DATE(received_at AT TIME ZONE 'Africa/Cairo') >= :since
+        GROUP BY DATE_TRUNC('month', received_at AT TIME ZONE 'Africa/Cairo'), currency ORDER BY month
     """,
     "income_report_yearly": """
-        SELECT TO_CHAR(DATE_TRUNC('month', received_at), 'YYYY-MM') AS month,
+        SELECT TO_CHAR(DATE_TRUNC('month', received_at AT TIME ZONE 'Africa/Cairo'), 'YYYY-MM') AS month,
             ROUND(SUM(amount)::numeric, 2) AS total, currency
-        FROM income WHERE user_id = :user_id AND received_at >= :since
-        GROUP BY DATE_TRUNC('month', received_at), currency ORDER BY month
+        FROM income WHERE user_id = :user_id
+          AND DATE(received_at AT TIME ZONE 'Africa/Cairo') >= :since
+        GROUP BY DATE_TRUNC('month', received_at AT TIME ZONE 'Africa/Cairo'), currency ORDER BY month
     """,
     "recent_income": """
         SELECT source_type, description, amount, currency, received_at FROM income
