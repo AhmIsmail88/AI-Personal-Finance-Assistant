@@ -11,7 +11,7 @@ from app.agents.db_agent import execute_operation
 from app.agents.analyst import summarize_response
 from app.config import settings
 
-# Windows requires SelectorEventLoop for psycopg (psycopg3 is incompatible with ProactorEventLoop)
+# Windows requires SelectorEventLoop for psycopg
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -31,12 +31,14 @@ def _build_workflow() -> StateGraph:
     workflow.add_node("db_agent", execute_operation)
     workflow.add_node("analyst", summarize_response)
 
-    # Bug #2 fix: confirm_delete ALWAYS interrupts (never checks a flag first)
+    # Fix #1: confirm_delete يرجع pending_delete في الـ state
+    # confirmed = True  → المستخدم وافق → pending_delete=True → db_agent يحذف
+    # confirmed = False → المستخدم رفض  → pending_delete=False → db_agent يتجاهل
     def confirm_delete(state: AgentState):
-        # This always pauses the graph and waits for user input via Command(resume=...)
-        interrupt("confirm_delete")
-        # When resumed: Command(resume=True) → confirmed, Command(resume=False) → cancelled
-        return state
+        confirmed = interrupt("confirm_delete")
+        if confirmed:
+            return {**state, "pending_delete": True,  "pending_confirmation": False}
+        return     {**state, "pending_delete": False, "pending_confirmation": False}
 
     workflow.add_node("confirm_delete", confirm_delete)
 
@@ -46,7 +48,7 @@ def _build_workflow() -> StateGraph:
     # ── Routing after router ──────────────────────────────────────────────────
     def route_decision(state: AgentState):
         if state.get("needs_clarification"):
-            return "analyst"  # let analyst surface the clarification question
+            return "analyst"
 
         intent = state.get("intent")
         if intent == "log_expense":
@@ -56,28 +58,28 @@ def _build_workflow() -> StateGraph:
         elif intent == "delete_entry":
             return "confirm_delete"
         elif intent == "update_expense":
-            return "extractor"   # extractor pulls update_data fields
+            return "extractor"
         elif intent == "export_report":
-            return "db_agent"    # db_agent fetches the data, handler sends the file
+            return "db_agent"
         elif intent == "log_income":
-            return "extractor"   # extractor pulls income_data fields
+            return "extractor"
         elif intent == "query_balance":
-            return "db_agent"    # direct to db_agent for balance calculation
+            return "db_agent"
         elif intent == "add_fixed_payment":
-            return "extractor"   # extractor pulls fixed_payment_data fields
+            return "extractor"
         elif intent == "list_fixed_payments":
-            return "db_agent"    # direct to db_agent to list
+            return "db_agent"
         else:
-            return "analyst"     # unknown → analyst gives a polite redirect
+            return "analyst"
 
     workflow.add_conditional_edges(
         "router",
         route_decision,
         {
-            "extractor": "extractor",
-            "db_agent": "db_agent",
+            "extractor":      "extractor",
+            "db_agent":       "db_agent",
             "confirm_delete": "confirm_delete",
-            "analyst": "analyst",
+            "analyst":        "analyst",
         }
     )
 
@@ -102,13 +104,7 @@ def _build_workflow() -> StateGraph:
 
 async def init_graph(force_memory: bool = False):
     """
-    Initialize the graph with AsyncPostgresSaver checkpointer (production)
-    or MemorySaver (dev/testing).
-
-    Args:
-        force_memory: If True, skip Postgres and use MemorySaver. Use this
-                      in tests or when Postgres is unavailable.
-
+    Initialize the graph with AsyncPostgresSaver (production) or MemorySaver (dev/test).
     Must be called inside a running asyncio event loop.
     """
     global app_graph
@@ -124,14 +120,9 @@ async def init_graph(force_memory: bool = False):
         from psycopg_pool import AsyncConnectionPool
         from psycopg import AsyncConnection
 
-        # Convert asyncpg URL to psycopg URL
-        pg_url = settings.postgres_url.replace(
-            "postgresql+asyncpg://", "postgresql://"
-        )
+        pg_url = settings.postgres_url.replace("postgresql+asyncpg://", "postgresql://")
 
-        # ── Step 1: Run setup() via direct connection ─────────────────────────
-        # PgBouncer in transaction mode doesn't support CREATE INDEX CONCURRENTLY.
-        # We use a direct connection (bypass PgBouncer) for the setup only.
+        # Step 1: setup() via direct connection (bypasses PgBouncer)
         try:
             async with await AsyncConnection.connect(
                 pg_url, autocommit=True, prepare_threshold=0
@@ -145,7 +136,7 @@ async def init_graph(force_memory: bool = False):
                 "Tables may already exist — continuing."
             )
 
-        # ── Step 2: Build pool for normal checkpointing ───────────────────────
+        # Step 2: pool for normal checkpointing
         pool = AsyncConnectionPool(
             conninfo=pg_url,
             max_size=5,
@@ -160,12 +151,7 @@ async def init_graph(force_memory: bool = False):
         logger.info("Graph initialized with AsyncPostgresSaver.")
 
     except Exception as e:
-        logger.warning(
-            f"AsyncPostgresSaver init failed ({e}), falling back to MemorySaver."
-        )
+        logger.warning(f"AsyncPostgresSaver init failed ({e}), falling back to MemorySaver.")
         workflow = _build_workflow()
         app_graph = workflow.compile(checkpointer=MemorySaver())
         logger.info("Graph initialized with MemorySaver (fallback).")
-
-
-

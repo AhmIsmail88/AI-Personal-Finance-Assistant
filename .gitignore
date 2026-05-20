@@ -3,5 +3,5 @@ venv/
 .venv/
 __pycache__/
 *.pyc
-test_graph.py
+cleanup_db.py
 bug_report.md
