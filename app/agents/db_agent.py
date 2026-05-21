@@ -374,10 +374,10 @@ async def execute_operation(state: AgentState) -> AgentState:
                     LIMIT 1000
                 """
                 income_query = """
-                    SELECT i.source_type as item, i.description, i.amount, i.currency, i.created_at, 'Income' AS category
+                    SELECT i.source_type as item, i.description, i.amount, i.currency, i.received_at AS created_at, 'Income' AS category
                     FROM income i
                     WHERE i.user_id = :user_id
-                    ORDER BY i.created_at DESC
+                    ORDER BY i.received_at DESC
                     LIMIT 1000
                 """
                 expense_result = await session.execute(text(expense_query), {"user_id": state["telegram_id"]})
