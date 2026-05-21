@@ -1,9 +1,11 @@
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
+# ── Egypt timezone (Africa/Cairo handles DST automatically) ───────────────────
+EGYPT_TZ = ZoneInfo("Africa/Cairo")
 
 # ── Arabic and English keyword lists ─────────────────────────────────────────
-
-TODAY_KW     = ["النهارده", "اليوم", "today", "اليوم ده", "النهارده"]
+TODAY_KW     = ["النهارده", "اليوم", "today", "اليوم ده"]
 YESTERDAY_KW = ["امس", "أمس", "yesterday", "البارح", "إمبارح"]
 WEEK_KW      = ["الأسبوع", "الأسبوع ده", "هذا الأسبوع", "this week", "week", "أسبوع"]
 MONTH_KW     = ["الشهر", "الشهر ده", "هذا الشهر", "this month", "month", "شهر"]
@@ -18,8 +20,7 @@ def detect_date_intent(user_message: str) -> str | None:
     Returns None if no date/period keyword is found.
     """
     msg = user_message.lower()
-
-    # Order matters: yesterday before today, yearly before half-year, half-year before month
+    # Order matters: yesterday before today, yearly before half-year
     if any(k in msg for k in YESTERDAY_KW):
         return "total_yesterday"
     if any(k in msg for k in TODAY_KW):
@@ -32,16 +33,18 @@ def detect_date_intent(user_message: str) -> str | None:
         return "total_this_month"
     if any(k in msg for k in WEEK_KW):
         return "total_this_week"
-
     return None
 
 
 def resolve_date_params(query_key: str, current_date: datetime) -> dict:
     """
-    Computes the date parameters for a given query_key relative to current_date.
-    All date math happens in Python — never in SQL or LLM.
+    Computes date params using Egypt local time (Africa/Cairo).
+    This ensures "today" / "yesterday" match what the user sees on their phone,
+    not UTC — which would cause off-by-one errors after midnight in Egypt.
     """
-    today = current_date.date()
+    # Convert UTC → Egypt local time first
+    egypt_now = current_date.astimezone(EGYPT_TZ)
+    today = egypt_now.date()
 
     mapping = {
         "total_today":      {"target_date": today},
@@ -61,6 +64,11 @@ def has_date_keyword(user_message: str) -> bool:
     return any(k in msg for k in all_kw)
 
 
+def get_current_datetime_egypt() -> datetime:
+    """Returns current datetime in Egypt timezone."""
+    return datetime.now(EGYPT_TZ)
+
+
 def get_current_datetime_utc() -> datetime:
-    """Returns the current UTC datetime (timezone-aware)."""
+    """Returns current UTC datetime (timezone-aware)."""
     return datetime.now(timezone.utc)

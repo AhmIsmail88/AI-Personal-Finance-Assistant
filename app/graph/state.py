@@ -46,7 +46,8 @@ class AgentState(TypedDict, total=False):
     # Query finance
     query_key: str | None
     query_params: dict | None
-    sql_result: list | None
+    # sql_result: list for normal queries, dict {"expenses":[], "income":[]} for export
+    sql_result: list | dict | None
 
     # Control flow
     needs_clarification: bool

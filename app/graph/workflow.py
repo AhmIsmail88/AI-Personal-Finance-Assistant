@@ -34,9 +34,9 @@ def _build_workflow() -> StateGraph:
     # Bug #2 fix: confirm_delete ALWAYS interrupts (never checks a flag first)
     def confirm_delete(state: AgentState):
         # This always pauses the graph and waits for user input via Command(resume=...)
-        interrupt("confirm_delete")
+        confirmed = interrupt("confirm_delete")
         # When resumed: Command(resume=True) → confirmed, Command(resume=False) → cancelled
-        return state
+        return {**state, "pending_delete": bool(confirmed)}
 
     workflow.add_node("confirm_delete", confirm_delete)
 

@@ -38,7 +38,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Restore persisted conversation state from the checkpointer ──────────
     persisted = await app_graph.aget_state(config)
-    prev_values = persisted.values if persisted else {}
+    prev_values = (persisted.values if persisted else None) or {}
 
     # Sliding window — keep last 20 messages only to control LLM context size
     history = prev_values.get("conversation_history", [])
@@ -81,8 +81,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ── Export report — send Excel file ──────────────────────────────────
         if result.get("intent") == "export_report" and result.get("sql_result"):
             await update.message.reply_text("جاري تجهيز التقرير... ⏳")
+
+            raw = result["sql_result"]
+
+            # Normalize: db_agent returns dict {"expenses":[], "income":[]}
+            # but guard against old list format just in case
+            if isinstance(raw, dict):
+                excel_data = raw
+            else:
+                # Fallback: treat as expenses-only list
+                excel_data = {"expenses": raw, "income": []}
+
             success = await export_excel_report(
-                sql_result=result["sql_result"],
+                sql_result=excel_data,
                 bot=context.bot,
                 chat_id=user_id,
                 current_date=current_date,

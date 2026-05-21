@@ -2,6 +2,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import HumanMessage, AIMessage
 from app.config import settings
 from app.graph.state import AgentState
 
@@ -75,8 +76,18 @@ JSON schema to return:
         ("human", "{user_message}")
     ])
 
+    # Convert (role, content) tuples → LangChain BaseMessage objects
+    # ChatPromptTemplate placeholder requires BaseMessage, not raw tuples
+    raw_history = state.get("conversation_history", [])
+    lc_history = []
+    for role, content in raw_history:
+        if role == "user":
+            lc_history.append(HumanMessage(content=content))
+        else:
+            lc_history.append(AIMessage(content=content))
+
     result = await (prompt | structured_llm).ainvoke({
-        "history": state.get("conversation_history", []),
+        "history": lc_history,
         "user_message": state["user_message"]
     })
 
